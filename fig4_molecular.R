@@ -1,22 +1,35 @@
 # ============================================================================
-# fig3_molecular.R — Figure 3
+# fig4_molecular.R — Figure 4 molecular panels
 #
-# Input:  data/omic_features.csv, data/gsea_results.csv
-# Output: output/fig3_molecular.svg/.png
-#
-# Prerequisites: source("00_helpers.R"); install.packages("ggvenn")
-#                install.packages("ggbreak")
+# Input:  data/omic_features.csv
+#           platform, domain, feature
+#         data/gsea_results.csv
+#           pathway, domain, database, NES, p_adjust
+# Output: output/fig4_molecular.svg/.png
 # ============================================================================
+
+if (!exists("save_fig")) source("00_helpers.R")
 
 library(ggvenn)
 library(ggbreak)
 
-omic_feat <- read_csv(file.path(data_dir, "omic_features.csv"),
-                      show_col_types = FALSE)
-gsea_res  <- read_csv(file.path(data_dir, "gsea_results.csv"),
-                      show_col_types = FALSE)
+omic_path <- file.path(data_dir, "omic_features.csv")
+gsea_path <- file.path(data_dir, "gsea_results.csv")
+require_input(omic_path, "Omic-feature input")
+require_input(gsea_path, "GSEA input")
 
-# ── Panel theme (matches original plot.format) ─────────────────────────────
+omic_feat <- read_csv(omic_path, show_col_types = FALSE)
+gsea_res <- read_csv(gsea_path, show_col_types = FALSE)
+require_columns(
+  omic_feat, c("platform", "domain", "feature"), "omic_features.csv"
+)
+require_columns(
+  gsea_res,
+  c("pathway", "domain", "database", "NES", "p_adjust"),
+  "gsea_results.csv"
+)
+
+# ── Plot theme ─────────────────────────────────────────────────────────────
 plot.format <- theme(
   plot.background  = element_blank(),
   panel.background = element_blank(),
@@ -44,7 +57,7 @@ venn_domain_order  <- c("Vitality", "Psychological", "Cognitive",
                         "Locomotion", "Sensory")
 venn_fill_colors   <- c("#E41A1C", "#377EB8", "#4DAF4A", "#984EA3", "#FF7F00")
 
-# ── Panel A: Venn diagrams per platform ──────────────────────────────────────
+# ── Figure 4b: Venn diagrams per platform ────────────────────────────────────
 platforms <- unique(omic_feat$platform)
 
 make_venn <- function(df, platform_name) {
@@ -59,22 +72,22 @@ make_venn <- function(df, platform_name) {
 }
 
 venn_plots <- Filter(Negate(is.null), lapply(platforms, function(p) make_venn(omic_feat, p)))
-fig3a <- wrap_plots(venn_plots, ncol = 2)
+fig4b_overlap <- wrap_plots(venn_plots, ncol = 2)
 
-# ── Panel B: Feature counts ─────────────────────────────────────────────────
+# ── Feature-count panel ──────────────────────────────────────────────────────
 domain_counts <- omic_feat %>%
   group_by(domain, platform) %>%
   summarise(count = n_distinct(feature), .groups = "drop")
 
-fig3b <- ggplot(domain_counts, aes(x = domain, y = count, fill = platform)) +
+fig4_counts <- ggplot(domain_counts, aes(x = domain, y = count, fill = platform)) +
   geom_bar(stat = "identity", position = "dodge", alpha = 0.5) +
   geom_text(aes(label = count), position = position_dodge(width = 0.9),
             vjust = -0.3, size = 4) +
-  labs(x = NULL, y = "Count of Significant Features") +
+  labs(x = NULL, y = "Features in reduced model") +
   plot.format + scale_y_break(c(220, 700)) +
   theme(legend.position = "bottom")
 
-# ── Panel C: GSEA cross-domain ───────────────────────────────────────────────
+# ── Figure 4e: cross-domain GSEA ──────────────────────────────────────────────
 q_cut <- 0.25
 domain_gsea_order <- c("Vitality", "Psychological", "Cognitive",
                        "Locomotion", "Sensory")
@@ -96,7 +109,7 @@ pathway_order <- gsea_plot_df %>%
 gsea_plot_df <- gsea_plot_df %>%
   mutate(pathway_clean = factor(pathway_clean, levels = rev(pathway_order)))
 
-fig3c <- ggplot(gsea_plot_df,
+fig4e_gsea <- ggplot(gsea_plot_df,
                 aes(x = domain, y = pathway_clean,
                     color = NES, size = neg_log_q, shape = significant)) +
   geom_point(alpha = 0.88) +
@@ -116,6 +129,10 @@ fig3c <- ggplot(gsea_plot_df,
         legend.position = "right")
 
 # ── Combine ──────────────────────────────────────────────────────────────────
-fig3 <- (fig3a | fig3b) / fig3c + plot_layout(heights = c(1, 1.5))
+# Render the broken-axis panel before composition.
+fig4_counts_break <- ggplotify::as.ggplot(function() print(fig4_counts))
 
-save_fig(fig3, "fig3_molecular", width = 14, height = 16)
+fig4_selected <- (fig4b_overlap | fig4_counts_break) / fig4e_gsea +
+  plot_layout(heights = c(1, 1.5))
+
+save_fig(fig4_selected, "fig4_molecular", width = 14, height = 16)

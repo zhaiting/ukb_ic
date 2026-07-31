@@ -1,0 +1,10 @@
+data/
+output/
+*.xlsx
+*.xls
+*.rds
+*.parquet
+Rplots.pdf
+.RData
+.Rhistory
+.DS_Store

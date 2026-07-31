@@ -9,72 +9,101 @@
 library(ggplot2)
 library(dplyr)
 library(tidyr)
-library(forcats)
 library(scales)
 library(patchwork)
 library(readr)
 
 # ── Paths ────────────────────────────────────────────────────────────────────
-data_dir <- file.path("data")
+data_dir <- Sys.getenv("UKB_IC_DATA_DIR", unset = "data")
 fig_dir  <- file.path("output")
+supp_xlsx <- Sys.getenv(
+  "UKB_IC_SUPP_XLSX",
+  unset = file.path(data_dir, "Supp_Tables_R1.xlsx")
+)
+derived_dir <- Sys.getenv("UKB_IC_DERIVED_DIR", unset = data_dir)
 dir.create(fig_dir, showWarnings = FALSE, recursive = TRUE)
 
-# ── IC score labels & colours ────────────────────────────────────────────────
-score_labels <- c(
-  ic_score_i0            = "IC composite",
-  vitality_score_i0      = "Vitality",
-  psychological_score_i0 = "Psychological",
-  cog_comp_i0            = "Cognitive",
-  locomotion_score_i0    = "Locomotion",
-  sensory_score_i0       = "Sensory"
-)
-
+# ── IC score colours ─────────────────────────────────────────────────────────
 score_colors <- c(
   "IC composite"  = "#333333",
-  "Vitality"      = "#E41A1C",
-  "Psychological" = "#377EB8",
-  "Cognitive"     = "#4DAF4A",
-  "Locomotion"    = "#984EA3",
-  "Sensory"       = "#C4A000"
-)
-
-score_order <- c(
-  "IC composite", "Vitality", "Psychological",
-  "Cognitive", "Locomotion", "Sensory"
+  "Vitality"      = "#E8B33D",
+  "Psychological" = "#2E9E8F",
+  "Cognitive"     = "#8E6FB0",
+  "Locomotion"    = "#6FA86B",
+  "Sensory"       = "#B5793F"
 )
 
 # ── Domain colour palette ────────────────────────────────────────────────────
 domain_colors <- c(
-  Vitality      = "#E41A1C",
-  Psychological = "#377EB8",
-  Cognitive     = "#4DAF4A",
-  Locomotion    = "#984EA3",
-  Sensory       = "#FF7F00"
+  Vitality      = "#E8B33D",
+  Psychological = "#2E9E8F",
+  Cognitive     = "#8E6FB0",
+  Locomotion    = "#6FA86B",
+  Sensory       = "#B5793F"
 )
 
 # ── Sex colours ──────────────────────────────────────────────────────────────
-sex_colors <- c(Female = "#C0392B", Male = "#2E86C1")
+sex_colors <- c(Female = "#E36A6A", Male = "#355872")
 
-# ── Outcome metadata (loaded from data/) ─────────────────────────────────────
-# These are read at runtime from the supplementary CSVs.
-# Columns expected: outcome, label, system, primary_domain
-load_disease_meta <- function(path = file.path(data_dir, "disease_meta.csv")) {
-  if (file.exists(path)) {
-    read_csv(path, show_col_types = FALSE) %>%
-      mutate(system = factor(system, levels = unique(system)))
-  } else {
-    message("disease_meta.csv not found — some scripts may need it in data/")
-    NULL
+# ── Input checks ─────────────────────────────────────────────────────────────
+require_input <- function(path, label = basename(path)) {
+  if (!file.exists(path)) {
+    stop(
+      label, " was not found at: ", normalizePath(path, mustWork = FALSE),
+      call. = FALSE
+    )
   }
+  invisible(path)
 }
 
-load_mort_meta <- function(path = file.path(data_dir, "mort_meta.csv")) {
-  if (file.exists(path)) {
-    read_csv(path, show_col_types = FALSE)
-  } else {
-    message("mort_meta.csv not found — some scripts may need it in data/")
-    NULL
+require_columns <- function(df, columns, label = deparse(substitute(df))) {
+  missing <- setdiff(columns, names(df))
+  if (length(missing)) {
+    stop(
+      label, " is missing required columns: ", paste(missing, collapse = ", "),
+      call. = FALSE
+    )
   }
+  invisible(df)
+}
+
+read_supp_table <- function(sheet, header_row = 2) {
+  require_input(supp_xlsx, "Supplementary Tables workbook")
+  readxl::read_excel(
+    supp_xlsx,
+    sheet = sheet,
+    skip = header_row - 1,
+    .name_repair = "minimal"
+  )
+}
+
+read_supp_range <- function(sheet, range) {
+  require_input(supp_xlsx, "Supplementary Tables workbook")
+  readxl::read_excel(
+    supp_xlsx,
+    sheet = sheet,
+    range = range,
+    .name_repair = "minimal"
+  )
+}
+
+parse_estimate_ci <- function(x) {
+  x <- gsub("\u2212", "-", as.character(x), fixed = TRUE)
+  x <- gsub("\u2013|\u2014", "-", x)
+  parts <- stringr::str_match(
+    x,
+    "^\\s*([+-]?[0-9.]+)\\s*\\(([+-]?[0-9.]+)\\s*-\\s*([+-]?[0-9.]+)"
+  )
+  tibble::tibble(
+    estimate = suppressWarnings(as.numeric(parts[, 2])),
+    lower = suppressWarnings(as.numeric(parts[, 3])),
+    upper = suppressWarnings(as.numeric(parts[, 4]))
+  )
+}
+
+parse_delta_c <- function(x) {
+  x <- gsub("\u2212", "-", as.character(x), fixed = TRUE)
+  suppressWarnings(as.numeric(stringr::str_extract(x, "[+-]?[0-9.]+")))
 }
 
 # ── Shared base theme ────────────────────────────────────────────────────────
@@ -109,42 +138,10 @@ theme_heatmap <- function(base_size = 11) {
 save_fig <- function(p, name, width = 8, height = 10) {
   if (is.null(p)) return(invisible(NULL))
   ggsave(file.path(fig_dir, paste0(name, ".svg")), p,
-         width = width, height = height)
+         width = width, height = height, bg = "white")
   ggsave(file.path(fig_dir, paste0(name, ".png")), p,
-         width = width, height = height, dpi = 300)
+         width = width, height = height, dpi = 300, bg = "white")
   message("Saved: ", name, " (.svg + .png)")
-}
-
-# ── Tidy helpers ─────────────────────────────────────────────────────────────
-
-tidy_mort <- function(df, sex_set, mort_meta) {
-  domain_map <- setNames(mort_meta$primary_domain, mort_meta$label)
-  group_map  <- setNames(mort_meta$group, mort_meta$label)
-  group_order <- unique(mort_meta$group)
-
-  df %>%
-    mutate(p.val = .data[["p"]]) %>%
-    mutate(
-      score_label    = recode(exposure, !!!score_labels),
-      domain_group   = recode(label, !!!group_map),
-      domain_group   = factor(domain_group, levels = group_order),
-      primary_domain = recode(label, !!!domain_map),
-      sex_set        = sex_set
-    ) %>%
-    filter(!is.na(score_label))
-}
-
-tidy_dis <- function(df, sex_set, disease_meta) {
-  df %>%
-    mutate(
-      lo      = .data[["conf.low"]],
-      hi      = .data[["conf.high"]],
-      p.val   = .data[["p.value"]],
-      score_label = recode(score, !!!score_labels),
-      sex_set = sex_set
-    ) %>%
-    left_join(disease_meta, by = "outcome") %>%
-    filter(!is.na(score_label), !is.na(label))
 }
 
 # ── GSEA helper ──────────────────────────────────────────────────────────────
@@ -152,4 +149,7 @@ clean_pathway_label <- function(x) {
   gsub("_", " ", gsub("^HALLMARK_|^REACTOME_", "", x))
 }
 
-message("Helpers loaded. Place data CSVs in '", data_dir, "/' and run figure scripts.")
+message(
+  "Helpers loaded. Supplement workbook: ", supp_xlsx,
+  "; derived figure inputs: ", derived_dir
+)
